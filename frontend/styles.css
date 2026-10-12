@@ -53,6 +53,12 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 nav.tabs { display: flex; gap: 8px; margin: 22px 0 18px; flex-wrap: wrap; }
 nav.tabs button { background: transparent; }
 nav.tabs button.active { background: var(--panel); border-color: var(--accent); color: var(--accent); }
+.tab { display: inline-block; font-size: 14px; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--text); }
+.tab:hover { border-color: var(--accent); text-decoration: none; }
+.tab.active { background: var(--panel); border-color: var(--accent); color: var(--accent); }
+h3.sect { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 22px 0 10px; font-weight: 600; }
+a.order { display: block; text-decoration: none; color: inherit; }
+a.order:hover { text-decoration: none; }
 
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
 .card h2 { margin: 0 0 4px; font-size: 17px; }

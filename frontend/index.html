@@ -6,35 +6,25 @@
   <title>DropProof — fulfilment escrow judged on-chain</title>
   <meta name="description" content="Escrow a deposit behind a public delivery promise; GenLayer validators read the live proof page and rule DELIVERED or FAILED." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311171c'/%3E%3Cpath d='M14 24l18-9 18 9-18 9z' fill='%2327c4a6'/%3E%3Cpath d='M14 24v16l18 9V33z' fill='%231d8f79'/%3E%3Cpath d='M50 24v16l-18 9V33z' fill='%23f4a63b'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
-<body>
+<body data-page="board">
   <div class="wrap">
     <header class="top">
-      <div class="brand">
+      <a class="brand" href="/" style="text-decoration:none;color:inherit">
         <svg class="logo" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#11171c"/><path d="M14 24l18-9 18 9-18 9z" fill="#27c4a6"/><path d="M14 24v16l18 9V33z" fill="#1d8f79"/><path d="M50 24v16l-18 9V33z" fill="#f4a63b"/></svg>
-        <div>
-          <h1>DropProof</h1>
-          <div class="net">STUDIONET · 61999 · GENLAYER</div>
-        </div>
-      </div>
+        <div><h1>DropProof</h1><div class="net">STUDIONET · 61999 · GENLAYER</div></div>
+      </a>
       <div class="wallet" id="wallet"></div>
     </header>
-
-    <nav class="tabs" id="tabs">
-      <button data-view="board" class="active">Delivery board</button>
-      <button data-view="open">Open an order</button>
-      <button data-view="account">My account</button>
-    </nav>
-
+    <nav class="tabs" id="nav"></nav>
     <main id="view"></main>
-
     <div class="foot">
       DropProof is a public accountability register for externally verifiable deliveries.
       Verdicts are produced by GenLayer validator consensus, not by this site.
       <span id="contract-foot"></span>
     </div>
   </div>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>
