@@ -35,8 +35,26 @@ async function write(fn, args, value = 0n) {
   const c = await writeClient();
   return c.writeContract({ address: CONTRACT_ADDRESS, functionName: fn, args, value });
 }
-async function waitAccepted(hash) {
-  return readClient().waitForTransactionReceipt({ hash, status: TransactionStatus.ACCEPTED, retries: 200, interval: 4000 });
+async function waitStatus(hash, status, retries = 200, interval = 4000) {
+  return readClient().waitForTransactionReceipt({ hash, status, retries, interval });
+}
+// A transaction being ACCEPTED is NOT proof that the intended effect happened:
+// GenVM can finalize a call with an execution error, and a positive outcome is
+// only real once (a) the tx reaches FINALIZED and (b) the specific on-chain
+// state change we expected is actually present. `confirm` enforces both: it
+// waits for finalization (falling back gracefully if the explorer lags) and
+// then runs a caller-supplied readback that must return true.
+async function confirm(hash, readback, onProgress) {
+  await waitStatus(hash, TransactionStatus.ACCEPTED);
+  let finalized = false;
+  if (onProgress) onProgress("Accepted. Waiting for GenVM finalization…");
+  try {
+    await waitStatus(hash, TransactionStatus.FINALIZED, 120, 5000);
+    finalized = true;
+  } catch { /* explorer may lag on finalization; fall through to state readback */ }
+  if (onProgress) onProgress(finalized ? "Finalized. Confirming on-chain state…" : "Confirming on-chain state…");
+  const ok = await readback();
+  return { finalized, ok };
 }
 
 // -------------------------------------------------------------------- wallet
@@ -175,7 +193,7 @@ function resolvedRow(o) {
     <div class="hd"><a class="title" href="/order?id=${o.id}">#${o.id} · ${esc(o.deliverable.slice(0, 70))}${o.deliverable.length > 70 ? "…" : ""}</a>
       <span>${badge(o.status)} ${o.verdict !== "NONE" ? `<span class="pill">${o.confidence}%</span>` : ""}</span></div>
     ${o.reason ? `<div class="reason" style="margin:10px 0">${esc(o.reason)}</div>` : ""}
-    <div class="meta">payout ${genFmt(o.deposit)} → ${who} ${short(o.recipient)} · resolved ${whenTs(o.resolved_at)} · reviews ${o.review_count} · <a href="/order?id=${o.id}">details →</a></div>
+    <div class="meta">${genFmt(o.deposit)} credited to ${who} ${short(o.recipient)} (claimable) · resolved ${whenTs(o.resolved_at)} · reviews ${o.review_count} · <a href="/order?id=${o.id}">details →</a></div>
   </div>`;
 }
 
@@ -226,12 +244,22 @@ async function submitOrder() {
     setStatus(st, "busy", "Awaiting signature in your wallet…");
     const hash = await write("open_order", [buyer, deliverable, rule, urls, due, reviewby], deposit);
     setStatus(st, "busy", "Submitted. Waiting for the network to accept it…", hash);
-    await waitAccepted(hash);
-    const count = Number(await read("get_order_count", []));
-    const id = String(count - 1);
-    const o = await readJSON("get_order", [id]);
-    if (o.status === "OPEN" && o.deliverable === deliverable) {
-      setStatus(st, "ok", `Order #${id} opened and funded. Redirecting…`, hash);
+    // State readback: the order id the contract actually created must now exist
+    // on-chain with our exact terms. A finalized-with-error tx fails this.
+    let id = null;
+    const { finalized, ok } = await confirm(hash, async () => {
+      const count = Number(await read("get_order_count", []));
+      if (!Number.isFinite(count) || count < 1) return false;
+      const cand = String(count - 1);
+      const o = await readJSON("get_order", [cand]);
+      if (o.status === "OPEN" && o.seller.toLowerCase() === wallet.address.toLowerCase() && o.deliverable === deliverable) {
+        id = cand;
+        return true;
+      }
+      return false;
+    }, (m) => setStatus(st, "busy", m, hash));
+    if (ok && id !== null) {
+      setStatus(st, "ok", `Order #${id} opened and funded${finalized ? " (finalized)" : ""}. Redirecting…`, hash);
       setTimeout(() => (location.href = `/order?id=${id}`), 1000);
     } else {
       const reason = await read("get_last_reject", [wallet.address]);
@@ -270,7 +298,8 @@ async function pageOrder() {
       <div class="k">Due at</div><div class="v">${whenTs(o.due_at)}</div>
       <div class="k">Review by</div><div class="v">${whenTs(o.review_by)}</div>
       <div class="k">Reviews run</div><div class="v">${o.review_count}</div>
-      ${o.settlement === "PAID" ? `<div class="k">Settled payout</div><div class="v">${genFmt(o.deposit)} → ${short(o.recipient)} (${o.recipient.toLowerCase() === o.seller.toLowerCase() ? "seller" : "buyer"})</div>` : ""}
+      ${o.settlement === "CREDITED" ? `<div class="k">Settlement</div><div class="v">${genFmt(o.deposit)} credited to ${short(o.recipient)} (${o.recipient.toLowerCase() === o.seller.toLowerCase() ? "seller" : "buyer"}) — claimable via withdraw, not yet a completed payment</div>` : ""}
+      ${o.evidence_digest ? `<div class="k">Evidence commitment</div><div class="v mono" title="keccak256 of the evidence the validators agreed on">0x${esc(o.evidence_digest.slice(0, 16))}… <span class="pill">validators agreed</span></div>` : ""}
     </div>
     <details class="ev"><summary>Proof evidence (${o.proof_urls.length} URL${o.proof_urls.length > 1 ? "s" : ""})</summary>
       ${o.proof_urls.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)} ↗</a>`).join("")}</details>
@@ -282,19 +311,36 @@ async function pageOrder() {
     </div>
     <div class="status-line" id="st"></div>
   </div>`;
-  if ($("#verify")) $("#verify").onclick = () => runWrite("verify_delivery", [id], "Validators are rendering the proof page and judging the delivery… (~15–40s)", pageOrder);
-  if ($("#lapse")) $("#lapse").onclick = () => runWrite("lapse_order", [id], "Lapsing the order…", pageOrder);
+  const beforeReviews = Number(o.review_count);
+  // Readback for verify: a real ruling either moves the order to a terminal
+  // status or (on INCONCLUSIVE) increments review_count. Mere ACCEPTED is not
+  // enough — a finalized-with-error verify would change neither.
+  const verifyReadback = async () => {
+    const after = await readJSON("get_order", [id]);
+    return TERMINAL.includes(after.status) || Number(after.review_count) > beforeReviews;
+  };
+  const lapseReadback = async () => {
+    const after = await readJSON("get_order", [id]);
+    return TERMINAL.includes(after.status);
+  };
+  if ($("#verify")) $("#verify").onclick = () => runWrite("verify_delivery", [id], "Validators are rendering the proof page and judging the delivery… (~15–40s)", verifyReadback, pageOrder);
+  if ($("#lapse")) $("#lapse").onclick = () => runWrite("lapse_order", [id], "Lapsing the order…", lapseReadback, pageOrder);
 }
-async function runWrite(fn, args, busyMsg, refresh) {
+async function runWrite(fn, args, busyMsg, readback, refresh) {
   const st = $("#st");
   try {
     await ensureReady();
     setStatus(st, "busy", "Awaiting signature in your wallet…");
     const hash = await write(fn, args);
     setStatus(st, "busy", busyMsg, hash);
-    await waitAccepted(hash);
-    setStatus(st, "ok", "Done. Refreshing…", hash);
-    setTimeout(refresh, 1000);
+    const { finalized, ok } = await confirm(hash, readback, (m) => setStatus(st, "busy", m, hash));
+    if (ok) {
+      setStatus(st, "ok", `Done${finalized ? " (finalized)" : ""}. Refreshing…`, hash);
+      setTimeout(refresh, 1000);
+    } else {
+      setStatus(st, "err", "The transaction was accepted but the expected on-chain change was not recorded. It may still be finalizing — refresh in a moment.", hash);
+      setTimeout(refresh, 4000);
+    }
   } catch (e) { setStatus(st, "err", e.message || String(e)); }
 }
 
@@ -324,10 +370,16 @@ async function pageAccount() {
     try {
       await ensureReady();
       setStatus(st, "busy", "Awaiting signature…");
+      const want = BigInt(credit);
       const hash = await write("withdraw", [credit.toString()]);
       setStatus(st, "busy", "Withdrawing…", hash);
-      await waitAccepted(hash);
-      setStatus(st, "ok", "Withdrawn.", hash);
+      // Readback: the claimable balance must actually drop by the amount pulled.
+      const { finalized, ok } = await confirm(hash, async () => {
+        const now = BigInt(await read("get_credit", [wallet.address]));
+        return now < want; // claimable balance actually dropped
+      }, (m) => setStatus(st, "busy", m, hash));
+      setStatus(st, ok ? "ok" : "err",
+        ok ? `Withdrawn${finalized ? " (finalized)" : ""}.` : "Accepted but balance not yet reduced — it may still be finalizing.", hash);
       setTimeout(pageAccount, 1200);
     } catch (e) { setStatus(st, "err", e.message || String(e)); }
   };

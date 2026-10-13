@@ -35,9 +35,10 @@ def main() -> int:
          "The proof page must show that Python 3.13.0 has been released.",
          ["https://www.python.org/downloads/release/python-3130/"]),
         ("FAILED",
-         "The python.org downloads page states that the current latest stable Python release is version 2.0.",
-         "The proof page must confirm the latest stable Python release is version 2.0.",
-         ["https://www.python.org/downloads/"]),
+         "Python 3.13.0 was released on or before 1 January 2024.",
+         "The official release date shown on the proof page for Python 3.13.0 must be on "
+         "or before 2024-01-01. If that release date is after 2024-01-01, the delivery FAILED.",
+         ["https://www.python.org/downloads/release/python-3130/"]),
     ]
 
     opened = []

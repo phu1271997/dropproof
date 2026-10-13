@@ -50,8 +50,8 @@ To open or review an order you need a little GEN on Studionet (chain 61999) —
 fund the wallet from the Studio **Accounts** panel; ~0.002 GEN covers the deposit
 plus gas for one full round.
 
-Step 1 — Browse the board. Open the app; you land on the delivery board with two
-seeded orders (one DELIVERED, one FAILED). Click one to read its deliverable,
+Step 1 — Browse the board. Open the app; you land on the delivery board with
+resolved orders (DELIVERED and FAILED). Click one to read its deliverable,
 acceptance rule, proof URLs, the validator verdict + confidence + rationale, and
 the transaction link.
 
@@ -81,17 +81,18 @@ If something goes wrong:
   stays open, just run the review again (optionally with a clearer proof URL).
 
 ## Expected verification outcome (410 / 500)
-Open the board without a wallet: order #0 reads DELIVERED (confidence 95) and order #1 reads FAILED (confidence 95), each with a one-paragraph rationale and a settled recipient. Open an order to see the deliverable, the acceptance rule, the proof URLs, and a link to the GenLayer transaction. The verdict, confidence and rationale are produced by validator consensus reading the live pages, not by the website.
+Open the board without a wallet: it shows resolved orders with both DELIVERED (deposit returned to the seller) and FAILED (deposit credited to the buyer) outcomes, each with a confidence, a one-paragraph rationale, a committed evidence digest and a settled recipient, plus the matching withdrawals. Open an order to see the deliverable, the acceptance rule, the proof URLs and a link to the GenLayer transaction. The verdict, confidence and rationale are produced by validator consensus reading the live pages, not by the website.
 
 ## Contract link
-https://explorer-studio.genlayer.com/address/0x1F4e2901FaDa9E50753325340CFdeD3349A5D2b0
+https://explorer-studio.genlayer.com/address/0x5F31afD425C47583B4472830aF8bA2881314A9Af
 
-Address: `0x1F4e2901FaDa9E50753325340CFdeD3349A5D2b0`
+Address: `0x5F31afD425C47583B4472830aF8bA2881314A9Af`
 Network: GenLayer Studionet (chain 61999)
 Status: **Preview** (Studio-hosted)
-Verified: deployed and seeded by the project wallet; DELIVERED, FAILED and
-withdrawal transactions are on-chain and the board renders them to an anonymous
-visitor (confirmed in a browser with no wallet connected).
+Verified: deployed and exercised by separate seller and buyer wallets; invalid-
+buyer rejection, DELIVERED, FAILED and withdrawal-by-both-parties transactions
+are on-chain (finalized) and the board renders them to an anonymous visitor
+(confirmed in a browser with no wallet connected).
 
 ## Website
 https://dropproof.vercel.app

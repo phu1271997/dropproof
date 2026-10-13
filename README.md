@@ -4,7 +4,7 @@
 
 - **Live app:** https://dropproof.vercel.app _(updated after deploy)_
 - **Network:** GenLayer **Studionet** (chain `61999`, RPC `https://studio.genlayer.com/api`) — Explorer status is **Preview**
-- **Contract:** [`0x1F4e2901FaDa9E50753325340CFdeD3349A5D2b0`](https://explorer-studio.genlayer.com/address/0x1F4e2901FaDa9E50753325340CFdeD3349A5D2b0)
+- **Contract:** [`0x5F31afD425C47583B4472830aF8bA2881314A9Af`](https://explorer-studio.genlayer.com/address/0x5F31afD425C47583B4472830aF8bA2881314A9Af)
 
 ## The problem
 
@@ -47,32 +47,83 @@ site. GenLayer supplies validator-side web rendering, model judgment and
 consensus; the contract supplies authorization, custody and settlement. Remove
 the AI/web layer and there is nothing left but a trust-me escrow.
 
-## Contract quality
+## Contract quality & security hardening
 
-- The nondet block returns `{verdict, confidence, reason}`; consensus is reached
-  with `gl.vm.run_nondet_unsafe(leader_fn, validator_fn)` where the validator
-  agrees only when it lands on the **same verdict** and a **comparable confidence
-  band** — never on JSON shape. Two validators that disagree on the verdict cannot
-  both pass.
-- Explicit handling + `UserError` for: unreadable/empty pages (→ `INCONCLUSIVE`),
-  non-https or duplicate URLs, zero deposit, out-of-range review window, buyer ==
-  seller, double-settlement, acting on a terminal order, withdrawing more than
-  credited.
-- Multi-source: up to three independent proof URLs are rendered and cross-weighed
-  in one ruling.
-- A **payable-custody safety**: because Studionet credits value to a payable
-  contract even on a later execution error, invalid terms return a `REJECTED`
-  sentinel and hold the deposit as withdrawable credit instead of stranding it.
+- **Strict, contract-level address validation.** `open_order` validates the buyer
+  with `Address(...)` (exact 20-byte wallet, nonzero, ≠ seller) *inside the
+  contract* — the frontend check is only a convenience. A malformed buyer can
+  never reach storage, so a FAILED remedy can never be credited to an address
+  that cannot withdraw.
+- **Strict verdict parsing.** `_strict_verdict` honours only an exact match to
+  `DELIVERED`/`FAILED`/`INCONCLUSIVE`. Malformed output (e.g.
+  `NOT_ENOUGH_EVIDENCE`) can never be read as `FAILED`/`DELIVERED` via substrings;
+  anything unsupported becomes `INCONCLUSIVE` and moves no money.
+- **Consensus on the evidence, not just the verdict.** Each juror commits a
+  keccak-256 digest (`evidence_digest`) over the exact, normalised evidence it
+  retrieved. A validator agrees only when it lands on the **same strict verdict**,
+  a **comparable confidence band**, **and the same evidence commitment** — a
+  validator that read different page content forces a rotation.
+- **Authoritative timing.** The jury is required to find an authoritative
+  timestamp (published/release date, changelog entry…) establishing delivery on
+  or before the due date; a page merely existing now is not accepted as proof.
+- **Conservative evidence handling.** Every listed proof URL is *mandatory*: a
+  single missing/unreadable source yields `INCONCLUSIVE`. Truncated documents are
+  flagged and must not be read as `DELIVERED` for content beyond the retrieved
+  portion.
+- **Buyer protection on lapse.** `lapse_order` never sweeps an *unreviewed* claim
+  back to the seller: if the review window closed with zero reviews it runs one
+  final authoritative review and settles on its verdict; only a genuine
+  `INCONCLUSIVE` lapses the deposit back to the seller.
+- **Claimable ≠ paid.** A ruling marks the order `CREDITED` (a claimable balance),
+  not `PAID`. `get_account` exposes `claimable` vs cumulative `withdrawn`.
+  `withdraw` debits and emits the native transfer `on="finalized"` in the same
+  transaction, so the debit and the send commit or roll back together (a failed
+  withdrawal leaves the credit intact and re-claimable; a successful one cannot be
+  replayed).
+- Explicit `UserError` handling for non-https/duplicate URLs, zero deposit,
+  out-of-range review window, acting on a terminal order and over-withdrawal; and
+  a **payable-custody safety** — invalid terms return a `REJECTED` sentinel and
+  hold the deposit as the seller's withdrawable credit instead of stranding it.
 
 ## Repository layout
 
 ```
 contracts/dropproof.py     # the Intelligent Contract
 scripts/deploy.py          # studionet deploy (genlayer_py) + --check-only schema check
-scripts/seed.py            # seed 1 DELIVERED + 1 FAILED + a withdrawal
+scripts/seed.py            # quick demo seed: 1 DELIVERED + 1 FAILED + a withdrawal
+scripts/e2e_studionet.py   # full StudioNet e2e: 2 wallets, invalid buyer, DELIVERED,
+                           #   FAILED, finalized readbacks, tx links, balance changes
+tests/test_direct.py       # Direct Mode suite (gltest, mocked web/LLM + warped clock)
 scripts/build.mjs          # inject CONTRACT_ADDRESS into the frontend at build
 frontend/                  # single-page app (genlayer-js + MetaMask), no backend
 ```
+
+## Tests
+
+**Direct Mode** (no network, no docker — mocked web/LLM and a warped clock):
+
+```bash
+python3 tests/test_direct.py
+```
+
+Covers valid/invalid buyer addresses, strict verdict parsing (malformed model
+output never settles), historical deadlines, contradictory/unavailable/missing/
+truncated evidence, inconclusive outcomes, validator consensus on the evidence
+commitment, lapse recovery, settlement states and withdrawals by both parties
+with failed-payment recovery.
+
+**StudioNet end-to-end** (live consensus; separate seller & buyer wallets):
+
+```bash
+source ~/.genlayer/env.sh
+python3 scripts/e2e_studionet.py 0x<contract>
+```
+
+Opens an invalid-buyer order (REJECTED + recovery), a DELIVERED order against a
+timestamped immutable artifact and a FAILED order, verifies each to a FINALIZED
+GenVM result, reads back the authoritative on-chain state and the committed
+evidence digest, and withdraws with both wallets — printing Explorer tx links
+and real native-balance deltas.
 
 ## Deploy to Studionet
 
