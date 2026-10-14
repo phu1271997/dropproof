@@ -140,6 +140,10 @@ verdict coercion is validated deterministically in Direct Mode (where the LLM is
 mockable); scenario 4 proves the on-chain *consequence* — unsupported output
 never moves money.
 
+A captured live run with Explorer transaction links, finalized state readbacks
+and the real recipient-wallet balance change is in
+[`docs/STUDIONET_E2E.md`](docs/STUDIONET_E2E.md).
+
 ## Deploy to Studionet
 
 ```bash

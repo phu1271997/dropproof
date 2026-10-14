@@ -97,7 +97,9 @@ no-timestamp INCONCLUSIVE, lapse recovery, failed-payment recovery, and
 withdrawals by both parties with real native-balance deltas — all backed by
 finalized state readbacks, the committed evidence digest and Explorer tx links.
 The board also renders the resolved orders to an anonymous visitor (confirmed in
-a browser with no wallet connected).
+a browser with no wallet connected). A captured live run with Explorer
+transaction links, finalized readbacks and the real recipient-wallet balance
+change is in `docs/STUDIONET_E2E.md`.
 
 ## Website
 https://dropproof.vercel.app
