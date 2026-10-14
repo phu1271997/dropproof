@@ -79,6 +79,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .err { color: var(--red); }
 .good { color: var(--green); }
+.warn { color: var(--amber); }
 
 .order { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px; cursor: pointer; transition: .15s; }
 .order:hover { border-color: var(--accent); }

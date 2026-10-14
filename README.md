@@ -119,11 +119,26 @@ source ~/.genlayer/env.sh
 python3 scripts/e2e_studionet.py 0x<contract>
 ```
 
-Opens an invalid-buyer order (REJECTED + recovery), a DELIVERED order against a
-timestamped immutable artifact and a FAILED order, verifies each to a FINALIZED
-GenVM result, reads back the authoritative on-chain state and the committed
-evidence digest, and withdraws with both wallets — printing Explorer tx links
-and real native-balance deltas.
+Every write is **gated on `FINALIZED`** — a transaction that only reaches
+`ACCEPTED` is reported as *not final* and is never treated as proof. The suite
+covers, each with a finalized state readback, the committed evidence digest, an
+Explorer tx link and real native-balance deltas:
+
+| # | Scenario | Demonstrated |
+|---|---|---|
+| 1 | invalid buyer address | `REJECTED`; deposit held as seller credit and recovered |
+| 2 | DELIVERED (historical, timestamped immutable artifact) | seller credited |
+| 3 | FAILED (authoritative timestamp contradicts the claim) | buyer credited |
+| 4 | unavailable mandatory source | `INCONCLUSIVE` — ungrounded/unsupported output cannot settle money |
+| 5 | readable page, no authoritative timestamp | `INCONCLUSIVE`, order stays OPEN and reviewable |
+| 6 | lapse recovery | a final authoritative review runs before an unresolved deposit returns to the seller |
+| 7 | failed-payment recovery | an over-withdrawal finalizes with an error and leaves the credit intact and re-claimable |
+| 8 | withdrawals by both parties | real native-balance deltas for seller and buyer |
+
+*Malformed model output* cannot be forced against a live model, so the strict
+verdict coercion is validated deterministically in Direct Mode (where the LLM is
+mockable); scenario 4 proves the on-chain *consequence* — unsupported output
+never moves money.
 
 ## Deploy to Studionet
 
@@ -146,6 +161,14 @@ The app signs with MetaMask (no private key ships in the bundle), auto-switches
 the wallet to Studionet, shows a loading state while consensus runs, and renders
 the validator's verdict **and rationale** with a link to the transaction on the
 Explorer.
+
+**Finalization-gated success.** The UI never reports success on a bare
+`ACCEPTED`. Every write waits for `FINALIZED` and only then runs a
+transaction-specific state readback (the order exists with the expected terms;
+the order moved to a terminal status or `review_count` rose; the claimable
+balance actually dropped). If a transaction is accepted but not yet finalized,
+the UI shows a distinct *pending* state — not success; if it finalizes but the
+expected state change is absent, it reports a finalized-with-error failure.
 
 ## Seed demo data
 

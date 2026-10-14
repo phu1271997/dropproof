@@ -1,5 +1,5 @@
 # GENLAYER PROJECT EXPLORER — SUBMISSION DRAFT
-**Project:** DropProof · **Prepared:** 2026-10-12 · **Status: READY**
+**Project:** DropProof · **Prepared:** 2026-10-14 · **Status: READY**
 
 No blockers. Contract is live on Studionet, every write method has a UI caller,
 and the board already shows one DELIVERED + one FAILED order plus completed
@@ -89,10 +89,15 @@ https://explorer-studio.genlayer.com/address/0x5F31afD425C47583B4472830aF8bA2881
 Address: `0x5F31afD425C47583B4472830aF8bA2881314A9Af`
 Network: GenLayer Studionet (chain 61999)
 Status: **Preview** (Studio-hosted)
-Verified: deployed and exercised by separate seller and buyer wallets; invalid-
-buyer rejection, DELIVERED, FAILED and withdrawal-by-both-parties transactions
-are on-chain (finalized) and the board renders them to an anonymous visitor
-(confirmed in a browser with no wallet connected).
+Verified: deployed and exercised by separate seller and buyer wallets with a
+comprehensive end-to-end suite (`scripts/e2e_studionet.py`) in which every write
+is gated on `FINALIZED` (a bare `ACCEPTED` is never treated as proof): invalid-
+buyer rejection + recovery, DELIVERED, FAILED, unavailable-source INCONCLUSIVE,
+no-timestamp INCONCLUSIVE, lapse recovery, failed-payment recovery, and
+withdrawals by both parties with real native-balance deltas — all backed by
+finalized state readbacks, the committed evidence digest and Explorer tx links.
+The board also renders the resolved orders to an anonymous visitor (confirmed in
+a browser with no wallet connected).
 
 ## Website
 https://dropproof.vercel.app

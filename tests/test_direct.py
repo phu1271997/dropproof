@@ -17,6 +17,8 @@ decision-critical logic the judges asked for:
   * lapse recovery (final authoritative review before the deposit returns)
   * settlement is CREDITED (claimable), not a completed payment
   * withdrawals by both seller and buyer, and failed-payment recovery
+  * transfer-failure rollback: a withdrawal whose finalized native transfer
+    does not commit rolls the credit debit back atomically (credit re-claimable)
 
 Run:  python3 tests/test_direct.py
 """
@@ -281,6 +283,46 @@ def main():
         ok(o["status"] == "LAPSED" and o["recipient"] == hexaddr(seller),
            "LAPSED returns the deposit to the seller only after an inconclusive review")
         vm.clear_mocks()
+
+        # ------------------------------------------- transfer-failure rollback
+        section("transfer-failure rollback (debit and native send are atomic)")
+        # Fund the seller with a fresh, claimable credit via a DELIVERED ruling.
+        oidT, dueT, rbT = fresh_order(c, vm, seller, buyer)
+        vm.warp(iso(dueT + 30))
+        vm.mock_web(r"example\.com", {"method": "GET", "status": 200,
+                                      "body": "acme/widget v1.2.0 released 2024-12-20"})
+        vm.mock_llm(PROMPT_RE, DELIVERED_JSON)
+        start = int(c.get_credit(hexaddr(seller)))   # may be nonzero from earlier
+        wd_start = int(json.loads(c.get_account(hexaddr(seller)))["withdrawn"])
+        ok(c.verify_delivery(oidT) == "DELIVERED", "order delivered -> seller credited")
+        vm.clear_mocks()
+        before = int(c.get_credit(hexaddr(seller)))
+        ok(before == start + DEP, "seller gained a fresh claimable credit of one deposit")
+
+        # withdraw() debits the credit AND emits the native transfer on="finalized"
+        # in the SAME transaction. If that finalized transfer does not go through,
+        # the transaction never finalizes and ALL of its state changes - the debit
+        # included - must roll back together. Model that failure with a VM
+        # snapshot taken before the withdraw and a revert standing in for a
+        # transfer/finalization that did not commit.
+        snap = vm.snapshot()
+        vm.sender = seller; vm.origin = seller
+        c.withdraw(DEP)
+        ok(int(c.get_credit(hexaddr(seller))) == before - DEP,
+           "within the tx the credit is debited by the deposit (provisional)")
+        vm.revert(snap)  # finalized transfer failed -> the whole tx rolls back
+        ok(int(c.get_credit(hexaddr(seller))) == before,
+           "transfer failure rolls the debit back atomically: credit intact")
+        acct = json.loads(c.get_account(hexaddr(seller)))
+        ok(acct["claimable"] == str(before) and int(acct["withdrawn"]) == wd_start,
+           "no completed payment was recorded for the failed transfer")
+
+        # ... and the recovered credit is genuinely re-claimable afterwards.
+        vm.sender = seller; vm.origin = seller
+        c.withdraw(DEP)
+        acct = json.loads(c.get_account(hexaddr(seller)))
+        ok(int(acct["claimable"]) == before - DEP and int(acct["withdrawn"]) == wd_start + DEP,
+           "after recovery the credit withdraws successfully (nothing was lost)")
 
         # ---------------------------------------------------- withdraw guards
         section("withdraw guards")

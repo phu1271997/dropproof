@@ -39,22 +39,31 @@ async function waitStatus(hash, status, retries = 200, interval = 4000) {
   return readClient().waitForTransactionReceipt({ hash, status, retries, interval });
 }
 // A transaction being ACCEPTED is NOT proof that the intended effect happened:
-// GenVM can finalize a call with an execution error, and a positive outcome is
-// only real once (a) the tx reaches FINALIZED and (b) the specific on-chain
-// state change we expected is actually present. `confirm` enforces both: it
-// waits for finalization (falling back gracefully if the explorer lags) and
-// then runs a caller-supplied readback that must return true.
+// GenVM can finalize a call with an execution error, and pre-finalization state
+// is provisional and may still roll back. A positive outcome is only real once
+// (a) the tx reaches FINALIZED and (b) the specific on-chain state change we
+// expected is actually present AT finalization. `confirm` enforces that order:
+// it REQUIRES finalization before it will trust any state readback.
+//
+//   { finalized:true,  ok:true  }  -> success (finalized + expected change)
+//   { finalized:true,  ok:false }  -> finalized-with-error (tx final, change absent)
+//   { finalized:false, pending:true } -> not final yet; NEVER reported as success
+//
+// A readback is deliberately NOT run before finalization: a provisional value
+// must never be mistaken for a completed result.
 async function confirm(hash, readback, onProgress) {
   await waitStatus(hash, TransactionStatus.ACCEPTED);
-  let finalized = false;
   if (onProgress) onProgress("Accepted. Waiting for GenVM finalization…");
   try {
-    await waitStatus(hash, TransactionStatus.FINALIZED, 120, 5000);
-    finalized = true;
-  } catch { /* explorer may lag on finalization; fall through to state readback */ }
-  if (onProgress) onProgress(finalized ? "Finalized. Confirming on-chain state…" : "Confirming on-chain state…");
+    await waitStatus(hash, TransactionStatus.FINALIZED, 180, 5000);
+  } catch {
+    // Finalization did not confirm within the window. The result is still
+    // provisional — do not read state back and do not claim success.
+    return { finalized: false, ok: false, pending: true };
+  }
+  if (onProgress) onProgress("Finalized. Confirming on-chain state…");
   const ok = await readback();
-  return { finalized, ok };
+  return { finalized: true, ok, pending: false };
 }
 
 // -------------------------------------------------------------------- wallet
@@ -104,8 +113,9 @@ const qid = () => new URLSearchParams(location.search).get("id");
 const TERMINAL = ["DELIVERED", "FAILED", "LAPSED"];
 function setStatus(el, kind, msg, hash) {
   const link = hash ? ` <a href="${txUrl(hash)}" target="_blank" rel="noopener">view tx ↗</a>` : "";
-  if (kind === "busy") el.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`;
-  else if (kind === "err") el.innerHTML = `<span class="err">✗ ${esc(msg)}</span>`;
+  if (kind === "busy") el.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>${link}`;
+  else if (kind === "err") el.innerHTML = `<span class="err">✗ ${esc(msg)}</span>${link}`;
+  else if (kind === "warn") el.innerHTML = `<span class="warn">⏳ ${esc(msg)}</span>${link}`;
   else el.innerHTML = `<span class="good">✓ ${esc(msg)}</span>${link}`;
 }
 
@@ -258,10 +268,14 @@ async function submitOrder() {
       }
       return false;
     }, (m) => setStatus(st, "busy", m, hash));
-    if (ok && id !== null) {
-      setStatus(st, "ok", `Order #${id} opened and funded${finalized ? " (finalized)" : ""}. Redirecting…`, hash);
+    if (!finalized) {
+      // Not finalized: the result is provisional. Never report success here.
+      setStatus(st, "warn", "Accepted, but GenVM has not finalized yet — the order is not final until it does. Check the Board or My account shortly.", hash);
+    } else if (ok && id !== null) {
+      setStatus(st, "ok", `Order #${id} opened and funded (finalized). Redirecting…`, hash);
       setTimeout(() => (location.href = `/order?id=${id}`), 1000);
     } else {
+      // Finalized but our order is not on-chain -> the terms were rejected.
       const reason = await read("get_last_reject", [wallet.address]);
       setStatus(st, "err", `Rejected: ${reason || "invalid terms"}. Your deposit is held as withdrawable credit (see My account).`);
     }
@@ -334,12 +348,15 @@ async function runWrite(fn, args, busyMsg, readback, refresh) {
     const hash = await write(fn, args);
     setStatus(st, "busy", busyMsg, hash);
     const { finalized, ok } = await confirm(hash, readback, (m) => setStatus(st, "busy", m, hash));
-    if (ok) {
-      setStatus(st, "ok", `Done${finalized ? " (finalized)" : ""}. Refreshing…`, hash);
+    if (finalized && ok) {
+      setStatus(st, "ok", "Done (finalized). Refreshing…", hash);
       setTimeout(refresh, 1000);
+    } else if (!finalized) {
+      setStatus(st, "warn", "Accepted, but GenVM has not finalized yet — this is not final. Refresh in a moment.", hash);
+      setTimeout(refresh, 6000);
     } else {
-      setStatus(st, "err", "The transaction was accepted but the expected on-chain change was not recorded. It may still be finalizing — refresh in a moment.", hash);
-      setTimeout(refresh, 4000);
+      setStatus(st, "err", "The transaction finalized but the expected on-chain change was not recorded (finalized with error).", hash);
+      setTimeout(refresh, 2000);
     }
   } catch (e) { setStatus(st, "err", e.message || String(e)); }
 }
@@ -376,10 +393,11 @@ async function pageAccount() {
       // Readback: the claimable balance must actually drop by the amount pulled.
       const { finalized, ok } = await confirm(hash, async () => {
         const now = BigInt(await read("get_credit", [wallet.address]));
-        return now < want; // claimable balance actually dropped
+        return now < want; // claimable balance actually dropped at finalization
       }, (m) => setStatus(st, "busy", m, hash));
-      setStatus(st, ok ? "ok" : "err",
-        ok ? `Withdrawn${finalized ? " (finalized)" : ""}.` : "Accepted but balance not yet reduced — it may still be finalizing.", hash);
+      if (finalized && ok) setStatus(st, "ok", "Withdrawn (finalized).", hash);
+      else if (!finalized) setStatus(st, "warn", "Accepted, but not finalized yet — the transfer is not final until GenVM finalizes. Your credit is unchanged until then.", hash);
+      else setStatus(st, "err", "Finalized, but your claimable balance did not drop (failed-payment recovery: the credit is intact and re-claimable).", hash);
       setTimeout(pageAccount, 1200);
     } catch (e) { setStatus(st, "err", e.message || String(e)); }
   };
